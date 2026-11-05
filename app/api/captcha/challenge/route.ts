@@ -1,28 +1,18 @@
 // app/api/captcha/challenge/route.ts
 import { NextResponse } from 'next/server';
 
-const globalForChallenges = global as unknown as { challenges: Map<string, { targetX: number }> };
-const challenges = globalForChallenges.challenges || new Map();
-if (process.env.NODE_ENV !== 'production') globalForChallenges.challenges = challenges;
-
 export async function GET() {
-  const id = crypto.randomUUID();
-  
   const W = 320;
   const H = 160;
+  const PIECE_SIZE = 60;
   
-  // 🎯 核心修复：前端强制要求 60px，那我们就把缺口画成 60px
-  const PIECE_SIZE = 60; 
-  
-  // 留出边距，保证缺口不出界 (W - 60 - 20 = 240)
   const targetX = Math.floor(Math.random() * (240 - 30 + 1)) + 30;
+  const targetY = 50;
   
-  // Y 轴居中：(160 - 60) / 2 = 50
-  const targetY = 50; 
-  
-  challenges.set(id, { targetX });
+  // 🎯 核心修改：把正确答案 targetX 和当前时间戳混在一起，转成 Base64 字符串作为 id 传给前端
+  const payload = JSON.stringify({ targetX, time: Date.now() });
+  const id = Buffer.from(payload).toString('base64');
 
-  // 1. 背景图（带 60x60 镂空缺口）
   const bgSvg = `
     <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -37,13 +27,10 @@ export async function GET() {
       <rect width="${W}" height="${H}" fill="url(#g1)" />
       <rect width="${W}" height="${H}" fill="url(#grid)" />
       <text x="${W/2}" y="${H/2 + 10}" font-family="Arial" font-size="24" fill="white" text-anchor="middle" font-weight="bold">奇幻工作室</text>
-      
-      <!-- 缺口：60x60 -->
       <rect x="${targetX}" y="${targetY}" width="${PIECE_SIZE}" height="${PIECE_SIZE}" rx="8" fill="rgba(0,0,0,0.6)" />
     </svg>
   `;
 
-  // 2. 拼图块（完美截取 60x60 区域）
   const puzzleSvg = `
     <svg viewBox="0 0 ${PIECE_SIZE} ${PIECE_SIZE}" xmlns="http://www.w3.org/2000/svg">
       <defs>
