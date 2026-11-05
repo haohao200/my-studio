@@ -24,3 +24,21 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ==================================================== */
+/* 下面是专门针对滑动验证组件的样式清理，请勿随意删除 */
+/* ==================================================== */
+
+/* 强制去掉拼图块及背景画布的所有多余边框、阴影、内边距 */
+[class*="ray-slide-captcha"] img,
+[class*="ray-slide-captcha"] canvas,
+.ray-slide-captcha-slider__piece img {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border-radius: 8px !important;
+  box-sizing: border-box !important;
+}
