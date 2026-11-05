@@ -75,13 +75,25 @@ export default function Home() {
   // ==================== 4. 核心业务逻辑 (Functions) ====================
 
   // 4.1 真正执行登录的函数 (供滑动验证成功后调用)
+  // 4.1 真正执行登录的函数 (供滑动验证成功后调用)
   const executeLogin = async () => {
     setMsg('正在验证账号...')
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setMsg('登录失败：' + error.message)
-      setCaptchaToken(null) // 登录失败，清空验证状态
+      // 🎯 核心修改：翻译常见的 Supabase 英文报错
+      let friendlyMessage = error.message;
+
+      if (error.message === 'Invalid login credentials') {
+        friendlyMessage = '账号或密码错误，请重新输入。';
+      } else if (error.message === 'Email not confirmed') {
+        friendlyMessage = '邮箱尚未验证，请检查你的邮箱。';
+      } else if (error.message.includes('rate limit')) {
+        friendlyMessage = '尝试次数过多，请稍后再试。';
+      }
+
+      setMsg('登录失败：' + friendlyMessage)
+      setCaptchaToken(null) // 登录失败，清空验证状态，下次需要重新滑块
     } else {
       setUser(data.user)
       setMsg('登录成功！欢迎来到奇幻工作室。')
@@ -169,18 +181,16 @@ export default function Home() {
               onOpenChange={setIsCaptchaOpen}
               apiBaseUrl={window.location.origin}
               onSuccess={(token) => {
-                // 解析后端偷偷塞进来的状态、时间、错误信息
-                const [status, time, errorMsg] = token.split('|');
+                // 解析：状态|用时|偏差值|中文说明
+                const [status, time, diff, customMsg] = token.split('|');
 
                 if (status === 'SUCCESS') {
                   setCaptchaToken(token)
-                  setMsg(`验证成功！用时 ${time} 秒，正在登录...`)
+                  setMsg(`✅ 验证成功！用时 ${time} 秒。`)
                   setIsCaptchaOpen(false)
-                  // 延迟 1.5 秒再登录，让你有时间看清楚提示
-                  setTimeout(() => executeLogin(), 1500)
+                  setTimeout(() => executeLogin(), 1200)
                 } else {
-                  // 失败了，关闭弹窗，重新展示错误
-                  setMsg(`${errorMsg}（用时 ${time} 秒），请重试！`)
+                  setMsg(`❌ 验证失败：${customMsg}（用时 ${time} 秒），请重试！`)
                   setIsCaptchaOpen(false)
                 }
               }}

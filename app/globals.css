@@ -42,3 +42,16 @@ body {
   border-radius: 8px !important;
   box-sizing: border-box !important;
 }
+/* 隐藏第三方组件内部的英文提示，全靠我们自己的顶部中文提示 */
+[class*="ray-slide-captcha"] [class*="status"],
+[class*="ray-slide-captcha"] [class*="message"],
+[class*="ray-slide-captcha"] [class*="text"] {
+  color: transparent !important;
+  font-size: 0 !important;
+}
+
+/* 强制改回滑块按钮里的文字颜色（防止误伤） */
+[class*="ray-slide-captcha"] [class*="slider"] * {
+  color: inherit !important;
+  font-size: 14px !important;
+}
