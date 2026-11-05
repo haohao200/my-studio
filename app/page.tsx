@@ -76,27 +76,32 @@ export default function Home() {
 
   // 4.1 真正执行登录的函数 (供滑动验证成功后调用)
   // 4.1 真正执行登录的函数 (供滑动验证成功后调用)
-  const executeLogin = async () => {
+    const executeLogin = async () => {
     setMsg('正在验证账号...')
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-
-    if (error) {
-      // 🎯 核心修改：翻译常见的 Supabase 英文报错
-      let friendlyMessage = error.message;
-
-      if (error.message === 'Invalid login credentials') {
-        friendlyMessage = '账号或密码错误，请重新输入。';
-      } else if (error.message === 'Email not confirmed') {
-        friendlyMessage = '邮箱尚未验证，请检查你的邮箱。';
-      } else if (error.message.includes('rate limit')) {
-        friendlyMessage = '尝试次数过多，请稍后再试。';
+    
+    try {
+      // 尝试请求
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      
+      if (error) {
+        let friendlyMessage = error.message;
+        
+        if (error.message === 'Invalid login credentials') {
+          friendlyMessage = '账号或密码错误，请重新输入。';
+        } else if (error.message === 'Failed to fetch') {
+          friendlyMessage = '网络连接波动，请检查网络后重试。';
+        }
+        
+        setMsg('登录失败：' + friendlyMessage)
+        setCaptchaToken(null) 
+      } else {
+        setUser(data.user)
+        setMsg('登录成功！欢迎来到奇幻工作室。')
       }
-
-      setMsg('登录失败：' + friendlyMessage)
-      setCaptchaToken(null) // 登录失败，清空验证状态，下次需要重新滑块
-    } else {
-      setUser(data.user)
-      setMsg('登录成功！欢迎来到奇幻工作室。')
+    } catch (err: any) {
+      // 如果底层直接抛出了网络错误（比如断网）
+      setMsg('网络异常：无法连接到服务器，请稍后再试。')
+      setCaptchaToken(null)
     }
   }
 
