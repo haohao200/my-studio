@@ -55,3 +55,10 @@ body {
   color: inherit !important;
   font-size: 14px !important;
 }
+
+/* 强制隐藏 Netlify 徽章 */
+#netlify-badge, 
+.netlify-badge, 
+a[href*="netlify.com"][target="_blank"] {
+  display: none !important;
+}
