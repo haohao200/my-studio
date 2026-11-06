@@ -20,7 +20,7 @@ export default function Home() {
   const [msg, setMsg] = useState('')
   
   // --- 工具栏导航 ---
-  const [activeTab, setActiveTab] = useState<'chat' | 'members'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'members' | 'admin'>('chat')
 
   // --- 聊天室 ---
   const [chatInput, setChatInput] = useState('')
@@ -444,6 +444,17 @@ export default function Home() {
               >
                 <span>👥</span> 成员状态
               </button>
+
+              {/* 🎯 新增：仅管理员可见的生成邀请码按钮 */}
+              {myProfile?.role === 'admin' && (
+                <button 
+                  onClick={() => setActiveTab('admin')} 
+                  className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'admin' ? 'bg-amber-600 text-white' : 'hover:bg-white/10 text-amber-400'}`}
+                >
+                  <span>🎟️</span> 生成邀请码
+                </button>
+              )}
+
               <button className="w-full text-left p-3 rounded-xl transition flex items-center gap-3 hover:bg-white/10 text-gray-500 cursor-not-allowed" disabled>
                 <span>📍</span> 今日签到 (见上方)
               </button>
@@ -523,6 +534,58 @@ export default function Home() {
                       </div>
                     )
                   })}
+                </div>
+              </>
+            )}
+
+            {/* 内容区 3：管理员专属面板 */}
+            {activeTab === 'admin' && myProfile?.role === 'admin' && (
+              <>
+                <div className="p-4 border-b border-white/10 bg-black/20">
+                  <h2 className="font-bold text-gray-200">🎟️ 邀请码管理</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto p-8 flex flex-col items-center">
+                  <div className="w-full max-w-md bg-black/30 p-6 rounded-2xl border border-white/10 shadow-lg">
+                    <h3 className="text-lg font-bold mb-4 text-amber-300">生成新邀请码</h3>
+                    <p className="text-xs text-gray-400 mb-4">邀请码有效期为 24 小时。请在此输入新成员的真名，生成后将邀请码发给对方。</p>
+                    
+                    <input
+                      className="w-full bg-black/40 border border-white/10 p-3 rounded-lg text-white mb-4 focus:outline-none focus:border-amber-400" 
+                      placeholder="输入该成员的真名" 
+                      value={newInviteUsername} 
+                      onChange={(e) => setNewInviteUsername(e.target.value)} 
+                    />
+                    
+                    <button 
+                      className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold p-3 rounded-lg transition-colors" 
+                      onClick={generateCode}
+                    >
+                      生成邀请码
+                    </button>
+
+                    {/* 刚生成的激活码展示区 */}
+                    {lastGeneratedCode.code && (
+                      <div className="mt-6 p-4 bg-amber-900/30 border border-amber-500/50 rounded-xl">
+                        <p className="text-sm text-amber-200 mb-3">
+                          刚生成的激活码 (发给 <strong className="text-white">{lastGeneratedCode.name}</strong>)：
+                        </p>
+                        <div className="flex gap-2 items-center w-full">
+                          <input
+                            type="text"
+                            readOnly
+                            value={lastGeneratedCode.code}
+                            className="flex-1 w-full min-w-0 bg-black/50 text-amber-300 font-mono text-center font-bold text-xl rounded py-2"
+                          />
+                          <button
+                            onClick={() => copyToClipboard(lastGeneratedCode.code)}
+                            className="flex-shrink-0 bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2 rounded transition"
+                          >
+                            复制
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}
