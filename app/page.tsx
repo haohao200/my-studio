@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { CaptchaModal } from 'ray-slide-captcha'
 import 'ray-slide-captcha/styles.css'
+import packageJson from '../package.json' // 🎯 引入版本信息
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -506,6 +507,11 @@ export default function Home() {
       {!user && (
         <button onClick={() => executeLogin(DEBUG_EMAIL, DEBUG_PASSWORD)} className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-full shadow-2xl text-sm z-50">⚡ 一键调试登录</button>
       )}
+      
+      {/* 🎯 新增：左下角悬浮版本号 */}
+      <div className="fixed bottom-4 left-4 text-xs text-gray-500 font-mono tracking-wider opacity-60 hover:opacity-100 transition-opacity z-50">
+        v{packageJson.version}
+      </div>
     </div>
   )
 }
