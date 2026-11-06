@@ -508,32 +508,53 @@ export default function Home() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                   {allMembers.length === 0 && <span className="text-gray-500 text-sm text-center mt-10">加载成员数据中...</span>}
-                  {allMembers.map((member) => {
-                    const isOnline = onlineUsers.includes(member.id)
-                    const hasCheckedIn = todayCheckIns.includes(member.id)
-                    return (
-                      <div key={member.id} className="bg-black/30 border border-white/10 p-4 rounded-xl flex items-center justify-between hover:bg-white/5 transition">
-                        <div className="flex items-center gap-4">
-                          {/* 在线绿点/灰点 */}
-                          <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-gray-500'}`}></div>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-white text-base">{member.nickname || '未命名'} <span className="text-xs font-normal text-gray-400">({member.username || '无真名'})</span></span>
-                            <div className="text-xs text-gray-400 flex gap-4 mt-1">
-                              <span>上次登录: {member.last_sign_in_at ? new Date(member.last_sign_in_at).toLocaleDateString() : '从未'}</span>
-                              <span>{isOnline ? '当前在线' : getOfflineTime(member.last_sign_out_at)}</span>
+                  
+                  {/* 🎯 核心修改：先对成员进行排序，管理员置顶 */}
+                  {[...allMembers]
+                    .sort((a, b) => {
+                      if (a.role === 'admin' && b.role !== 'admin') return -1;
+                      if (a.role !== 'admin' && b.role === 'admin') return 1;
+                      return 0; // 角色相同时保持原顺序
+                    })
+                    .map((member) => {
+                      const isOnline = onlineUsers.includes(member.id)
+                      const hasCheckedIn = todayCheckIns.includes(member.id)
+                      return (
+                        <div key={member.id} className="bg-black/30 border border-white/10 p-4 rounded-xl flex items-center justify-between hover:bg-white/5 transition">
+                          <div className="flex items-center gap-4">
+                            {/* 在线绿点/灰点 */}
+                            <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-gray-500'}`}></div>
+                            
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-white text-base">{member.nickname || '未命名'}</span>
+                                <span className="text-xs font-normal text-gray-400">({member.username || '无真名'})</span>
+                                
+                                {/* 🎯 新增：如果是管理员，显示皇冠标签 */}
+                                {member.role === 'admin' && (
+                                  <span className="bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-0.5 rounded border border-yellow-500/50">
+                                    👑 管理员
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="text-xs text-gray-400 flex gap-4 mt-1">
+                                <span>上次登录: {member.last_sign_in_at ? new Date(member.last_sign_in_at).toLocaleDateString() : '从未'}</span>
+                                <span>{isOnline ? '当前在线' : getOfflineTime(member.last_sign_out_at)}</span>
+                              </div>
                             </div>
                           </div>
+                          
+                          <div>
+                            {hasCheckedIn ? (
+                              <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-500/50">已签到</span>
+                            ) : (
+                              <span className="bg-gray-500/20 text-gray-400 text-xs px-3 py-1 rounded-full border border-gray-500/50">未签到</span>
+                            )}
+                          </div>
                         </div>
-                        <div>
-                          {hasCheckedIn ? (
-                            <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-500/50">已签到</span>
-                          ) : (
-                            <span className="bg-gray-500/20 text-gray-400 text-xs px-3 py-1 rounded-full border border-gray-500/50">未签到</span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })}
                 </div>
               </>
             )}
