@@ -85,15 +85,30 @@ export default function Home() {
     }
     recordLogin()
 
-    // 3.3 连接群聊
-    const chatChannel = supabase.channel('studio-room')
-    chatChannel.on('broadcast', { event: 'message' }, (payload) => {
-      setMessages((prev) => {
-        const isDuplicate = prev.some(m => m.time === payload.payload.time && m.text === payload.payload.text && m.sender === payload.payload.sender)
-        if (isDuplicate) return prev
-        return [...prev, payload.payload]
-      })
-    }).subscribe()
+    // 3.3 获取历史消息并监听新消息 (数据库持久化版)
+    const fetchMessages = async () => {
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .order('created_at', { ascending: true })
+        .limit(100)
+      if (data) setMessages(data)
+    }
+    fetchMessages()
+
+    const chatChannel = supabase.channel('studio-messages')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          // 接收到新消息时，追加到列表末尾
+          setMessages((prev) => {
+            // 防止刚拉取的历史消息和新消息重复
+            if (prev.some(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          })
+        }
+      ).subscribe()
 
     // 3.4 连接在线状态频道 (Presence)
     const presenceChannel = supabase.channel('studio-presence', {
@@ -287,12 +302,33 @@ export default function Home() {
     }
   }
 
+  // 4.6 发送消息 (显示昵称 + 乐观更新)
   const sendMessage = async () => {
     if (!chatInput.trim() || !user) return
     const displayName = myProfile?.nickname || myProfile?.username || '未命名'
-    const newMsg = { id: Date.now().toString(), text: chatInput, sender: displayName, time: new Date().toLocaleTimeString() }
-    await supabase.channel('studio-room').send({ type: 'broadcast', event: 'message', payload: newMsg })
-    setMessages((prev) => [...prev, newMsg]); setChatInput('')
+    
+    // 🎯 核心修改：加上 .select().single()，这样插入成功后，数据库会把这行完整的数据（包含 id 和 created_at）发回来
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        sender_id: user.id,
+        sender_nickname: displayName,
+        content: chatInput
+      })
+      .select()
+      .single()
+    
+    if (error) {
+      setMsg('发送失败：' + error.message)
+    } else {
+      setChatInput('')
+      // 🎯 核心修改：立刻把这条消息塞进本地列表，不需要等服务器推送
+      setMessages((prev) => {
+        // 去重：如果服务器回推得太快，防止重复显示
+        if (prev.some(m => m.id === data.id)) return prev;
+        return [...prev, data];
+      })
+    }
   }
 
   const copyToClipboard = (text: string) => {
@@ -433,12 +469,15 @@ export default function Home() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                   {messages.length === 0 && <span className="text-gray-500 text-sm text-center mt-10">这里空空如也，快来说第一句话吧！</span>}
-                  {messages.map((m, i) => {
-                    const isMe = m.sender === (myProfile?.nickname || '未命名')
+                  {/* 🎯 修改：使用新的字段名 m.sender_nickname 和 m.content */}
+                  {messages.map((m) => {
+                    const isMe = m.sender_nickname === (myProfile?.nickname || '未命名')
                     return (
-                      <div key={m.id || i} className={`flex flex-col max-w-[80%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
-                        <span className="text-xs text-gray-400 mb-1">{m.sender}</span>
-                        <span className={`px-4 py-2 rounded-2xl ${isMe ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-sm' : 'bg-white/20 text-gray-100 rounded-tl-sm'}`}>{m.text}</span>
+                      <div key={m.id} className={`flex flex-col max-w-[80%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
+                        <span className="text-xs text-gray-400 mb-1">{m.sender_nickname}</span>
+                        <span className={`px-4 py-2 rounded-2xl ${isMe ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-sm' : 'bg-white/20 text-gray-100 rounded-tl-sm'}`}>
+                          {m.content}
+                        </span>
                       </div>
                     )
                   })}
