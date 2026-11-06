@@ -1,11 +1,11 @@
 'use client'
 
 // ==================== 1. 依赖导入与初始化 ====================
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { CaptchaModal } from 'ray-slide-captcha'
 import 'ray-slide-captcha/styles.css'
-import packageJson from '../package.json' // 🎯 引入版本信息
+import packageJson from '../package.json'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,19 +17,23 @@ export default function Home() {
   // --- 用户与状态 ---
   const [user, setUser] = useState<any>(null)
   const [myProfile, setMyProfile] = useState<any>(null)
-  const [msg, setMsg] = useState('')
   
+  // 🎯 提示信息优化：增加可见状态
+  const [msg, setMsg] = useState('')
+  const [isMsgVisible, setIsMsgVisible] = useState(false)
+
   // --- 工具栏导航 ---
-  const [activeTab, setActiveTab] = useState<'chat' | 'members' | 'admin'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'members' | 'admin' | 'history' | 'announcement'>('chat')
+  const activeTabRef = useRef(activeTab) // 🎯 解决闭包陷阱
 
   // --- 聊天室 ---
   const [chatInput, setChatInput] = useState('')
   const [messages, setMessages] = useState<any[]>([])
-  
+
   // --- 成员状态 ---
   const [allMembers, setAllMembers] = useState<any[]>([])
-  const [onlineUsers, setOnlineUsers] = useState<string[]>([]) // 存当前在线的用户 ID
-  const [todayCheckIns, setTodayCheckIns] = useState<string[]>([]) // 存今天已签到用户 ID
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([])
+  const [todayCheckIns, setTodayCheckIns] = useState<string[]>([])
 
   // --- 滑动验证 ---
   const [isCaptchaOpen, setIsCaptchaOpen] = useState(false)
@@ -53,17 +57,70 @@ export default function Home() {
   const [nickname, setNickname] = useState('')
   const [showNicknameModal, setShowNicknameModal] = useState(false)
 
+  // --- 公告与签到历史 ---
+  const [announcement, setAnnouncement] = useState<any>(null)
+  const [hasUnreadAnnouncement, setHasUnreadAnnouncement] = useState(false)
+  const [editAnnouncement, setEditAnnouncement] = useState('')
+
+  const [selectedDate, setSelectedDate] = useState('')
+  const [historyData, setHistoryData] = useState<any[]>([])
+  const [selectedMember, setSelectedMember] = useState<any>(null)
+  const [memberHistory, setMemberHistory] = useState<any[]>([])
+
   const DEBUG_EMAIL = 'haohao@studio.com'
   const DEBUG_PASSWORD = 'hh87872118'
 
   // ==================== 3. 生命周期 ====================
-  useEffect(() => { setMounted(true) }, [])
+
+  // 记录当前 Tab 的值，防止 Realtime 回调里拿到旧状态
+  useEffect(() => {
+    activeTabRef.current = activeTab
+  }, [activeTab])
+
+  // 🎯 核心优化：监听 msg 变化，实现 3 秒后自动淡出
+  useEffect(() => {
+    if (msg) {
+      setIsMsgVisible(true) 
+      const timer = setTimeout(() => {
+        setIsMsgVisible(false)
+        setTimeout(() => setMsg(''), 500)
+      }, 2500)
+      return () => clearTimeout(timer)
+    }
+  }, [msg])
+
+  useEffect(() => {
+    setMounted(true)
+    setSelectedDate(new Date().toISOString().split('T')[0])
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) setUser(session.user)
     })
   }, [])
+
+  // 🎯 核心修复：公告数据拉取逻辑
+  const fetchLatestAnnouncement = async () => {
+    let { data, error } = await supabase
+      .from('announcements')
+      .select('*, profiles(username)')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+
+    if (error) {
+      console.warn('联表查询公告失败，降级为独立查询：', error.message)
+      const fallback = await supabase.from('announcements').select('*').order('updated_at', { ascending: false }).limit(1)
+      data = fallback.data
+    }
+    
+    if (data && data.length > 0) {
+      setAnnouncement(data[0])
+      setEditAnnouncement(data[0].content)
+      return data[0]
+    }
+    return null
+  }
 
   useEffect(() => {
     if (!user) return
@@ -73,8 +130,15 @@ export default function Home() {
       const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (data) {
         const isDebugAccount = user.email === DEBUG_EMAIL
-        setMyProfile({ ...data, role: isDebugAccount ? 'admin' : data.role })
+        const profileData = { ...data, role: isDebugAccount ? 'admin' : data.role }
+        setMyProfile(profileData)
         if (!data.nickname) setShowNicknameModal(true)
+
+        // 初始化公告检查
+        const latest = await fetchLatestAnnouncement()
+        if (latest && new Date(latest.updated_at) > new Date(profileData.last_read_announcement_at || '1970-01-01T00:00:00Z')) {
+          setHasUnreadAnnouncement(true)
+        }
       }
     }
     fetchProfile()
@@ -85,74 +149,130 @@ export default function Home() {
     }
     recordLogin()
 
-    // 3.3 获取历史消息并监听新消息 (数据库持久化版)
+    // 3.3 获取历史消息并监听新消息
     const fetchMessages = async () => {
-      const { data } = await supabase
-        .from('messages')
-        .select('*')
-        .order('created_at', { ascending: true })
-        .limit(100)
+      const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true }).limit(100)
       if (data) setMessages(data)
     }
     fetchMessages()
 
     const chatChannel = supabase.channel('studio-messages')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          // 接收到新消息时，追加到列表末尾
-          setMessages((prev) => {
-            // 防止刚拉取的历史消息和新消息重复
-            if (prev.some(m => m.id === payload.new.id)) return prev;
-            return [...prev, payload.new];
-          })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+        setMessages((prev) => {
+          if (prev.some(m => m.id === payload.new.id)) return prev;
+          return [...prev, payload.new];
+        })
+      }).subscribe()
+
+    // 🎯 修复：公告实时监听 (加入强制刷新和智能红点)
+    const announcementChannel = supabase.channel('studio-announcements')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements' }, async (payload) => {
+        // 收到新公告，立刻重新拉取（为了拿 profiles 联表数据）
+        const latest = await fetchLatestAnnouncement()
+        
+        if (latest) {
+          // 如果当前用户正好停留在“公告栏”页面，直接标记为已读，不显示红点
+          if (activeTabRef.current === 'announcement') {
+            setHasUnreadAnnouncement(false)
+            if (user) {
+              const now = new Date().toISOString()
+              await supabase.from('profiles').update({ last_read_announcement_at: now }).eq('id', user.id)
+              setMyProfile((prev: any) => ({ ...prev, last_read_announcement_at: now }))
+            }
+          } else {
+            // 如果不在公告页，亮起红点提醒
+            setHasUnreadAnnouncement(true)
+          }
         }
-      ).subscribe()
+      }).subscribe()
 
     // 3.4 连接在线状态频道 (Presence)
     const presenceChannel = supabase.channel('studio-presence', {
       config: { presence: { key: user.id } }
     })
     presenceChannel.on('presence', { event: 'sync' }, () => {
-      const state = presenceChannel.presenceState()
-      setOnlineUsers(Object.keys(state))
+      setOnlineUsers(Object.keys(presenceChannel.presenceState()))
     }).subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         await presenceChannel.track({ online_at: new Date().toISOString() })
       }
     })
 
-    return () => { 
+    return () => {
       supabase.removeChannel(chatChannel)
       supabase.removeChannel(presenceChannel)
+      supabase.removeChannel(announcementChannel)
     }
   }, [user])
 
-  // 🎯 修复：切换去“成员状态”页时，拉取最新成员数据，并开启 5 秒轮询
+  // 切换 Tab 时的数据拉取
   useEffect(() => {
-    if (activeTab === 'members' && user) {
-      fetchAllMembersData() // 刚切过去时先拉取一次
-      
-      // 每 5 秒自动刷新一次
-      const interval = setInterval(() => {
-        fetchAllMembersData()
-      }, 5000)
+    if (!user) return
 
-      // 切换走或退出时，清理定时器，防止内存泄漏
+    if (activeTab === 'members') {
+      fetchAllMembersData()
+      const interval = setInterval(() => { fetchAllMembersData() }, 5000)
       return () => clearInterval(interval)
     }
-  }, [activeTab, user])
+    if (activeTab === 'history' && myProfile?.role === 'admin') {
+      fetchHistoryByDate(selectedDate)
+    }
+    if (activeTab === 'announcement') {
+      markAnnouncementAsRead()
+    }
+  }, [activeTab, user, selectedDate, myProfile?.role])
 
   // ==================== 4. 核心逻辑 ====================
 
-  // 🎯 修复：获取所有成员和今日签到数据（修复时区问题）
+  const markAnnouncementAsRead = async () => {
+    if (!hasUnreadAnnouncement) return
+    const now = new Date().toISOString()
+    await supabase.from('profiles').update({ last_read_announcement_at: now }).eq('id', user.id)
+    setMyProfile((prev: any) => ({ ...prev, last_read_announcement_at: now }))
+    setHasUnreadAnnouncement(false)
+  }
+
+  const saveAnnouncement = async () => {
+    if (!editAnnouncement.trim()) return setMsg('公告内容不能为空')
+    const { error } = await supabase.from('announcements').insert({
+      content: editAnnouncement.trim(),
+      updated_by: user.id
+    })
+    if (error) setMsg('发布失败：' + error.message)
+    else {
+      setMsg('✅ 公告已发布')
+      // 自己发布的，直接强制刷新一次
+      fetchLatestAnnouncement().then(() => setHasUnreadAnnouncement(false))
+    }
+  }
+
+  // 4.2 签到历史相关
+  const fetchHistoryByDate = async (date: string) => {
+    setSelectedMember(null)
+    setHistoryData([])
+    const { data: checkins } = await supabase.from('check_ins').select('user_id').eq('check_in_date', date)
+    const checkedIds = checkins?.map(c => c.user_id) || []
+
+    const { data: profiles } = await supabase.from('profiles').select('*').order('role', { ascending: false })
+    if (profiles) {
+      setHistoryData(profiles.map(p => ({
+        ...p,
+        hasCheckedIn: checkedIds.includes(p.id)
+      })))
+    }
+  }
+
+  const fetchMemberHistory = async (member: any) => {
+    setSelectedMember(member)
+    const { data } = await supabase.from('check_ins').select('check_in_date').eq('user_id', member.id).order('check_in_date', { ascending: false })
+    if (data) setMemberHistory(data)
+  }
+
+  // 获取所有成员和今日签到数据
   const fetchAllMembersData = async () => {
-    // 获取所有成员
     const { data: profiles } = await supabase.from('profiles').select('*').order('created_at', { ascending: true })
     if (profiles) setAllMembers(profiles)
 
-    // 使用本地时区的 YYYY-MM-DD，防止早上 8 点前签到被算作前一天
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -161,19 +281,6 @@ export default function Home() {
 
     const { data: checkins } = await supabase.from('check_ins').select('user_id').eq('check_in_date', todayStr)
     if (checkins) setTodayCheckIns(checkins.map(c => c.user_id))
-  }
-
-  // 4.2 计算离线时间
-  const getOfflineTime = (lastSignOutAt: string | null) => {
-    if (!lastSignOutAt) return '未知'
-    const diffMs = new Date().getTime() - new Date(lastSignOutAt).getTime()
-    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-    if (days > 30) return '离线'
-    if (days > 0) return `离线 ${days}天`
-    const hours = Math.floor(diffMs / (1000 * 60 * 60))
-    if (hours > 0) return `离线 ${hours}小时`
-    const mins = Math.floor(diffMs / (1000 * 60))
-    return `离线 ${mins}分钟`
   }
 
   // 4.3 保存昵称
@@ -186,9 +293,8 @@ export default function Home() {
     if (existingUser) return setMsg('该昵称已被占用，请换一个吧！')
 
     const { data, error } = await supabase.from('profiles').update({ nickname: nickname.trim() }).eq('id', user.id).select()
-    if (error) {
-      alert(`⚠️ 保存昵称失败，原因：` + error.message);
-    } else {
+    if (error) setMsg(`⚠️ 保存昵称失败：` + error.message);
+    else {
       setMyProfile({ ...myProfile, nickname: nickname.trim() })
       setShowNicknameModal(false)
       setMsg('昵称设置成功！欢迎加入。')
@@ -231,13 +337,12 @@ export default function Home() {
   }
 
   const handleLogout = async () => {
-    // 记录退出时间
     await supabase.from('profiles').update({ last_sign_out_at: new Date().toISOString() }).eq('id', user.id)
     await supabase.auth.signOut()
     setUser(null); setMyProfile(null); setMessages([]); setCaptchaToken(null); setMsg('已退出')
   }
 
-  // 4.5 激活码与邀请码
+  // 激活码校验
   const handleActivate = async () => {
     if (!activationCode.trim() || !newPassword.trim()) return setMsg('请填写激活码和新密码')
     if (newPassword.length < 6) return setMsg('密码长度不能少于 6 位')
@@ -249,8 +354,6 @@ export default function Home() {
     if (codeError) return setMsg('激活失败，系统错误：' + codeError.message)
     if (!codeData) return setMsg('激活失败：无效的激活码')
     if (codeData.is_used) return setMsg('激活失败：该激活码已被使用')
-    
-    // 判断是否过期
     if (codeData.expires_at && new Date(codeData.expires_at) < new Date()) {
       return setMsg('激活失败：该激活码已过期，请联系管理员重新获取')
     }
@@ -272,6 +375,7 @@ export default function Home() {
     setActivationCode(''); setNewPassword('')
   }
 
+  // 生成邀请码
   const generateCode = async () => {
     if (!newInviteUsername.trim()) return setMsg('请先输入该邀请码绑定的用户名（真名）')
     const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase()
@@ -289,7 +393,7 @@ export default function Home() {
     }
   }
 
-  // 4.6 签到与聊天
+  // 4.5 签到与聊天
   const handleCheckIn = async () => {
     if (!user) return setMsg('请先登录')
     const { error } = await supabase.from('check_ins').insert({ user_id: user.id })
@@ -298,33 +402,25 @@ export default function Home() {
       else setMsg('签到出错：' + error.message)
     } else {
       setMsg(`签到成功！✅ ${myProfile?.username || '成员'}`)
-      fetchAllMembersData() // 🎯 签到成功后立刻刷新一下状态列表
+      fetchAllMembersData()
     }
   }
 
-  // 4.6 发送消息 (显示昵称 + 乐观更新)
   const sendMessage = async () => {
     if (!chatInput.trim() || !user) return
     const displayName = myProfile?.nickname || myProfile?.username || '未命名'
-    
-    // 🎯 核心修改：加上 .select().single()，这样插入成功后，数据库会把这行完整的数据（包含 id 和 created_at）发回来
+
     const { data, error } = await supabase
       .from('messages')
-      .insert({
-        sender_id: user.id,
-        sender_nickname: displayName,
-        content: chatInput
-      })
+      .insert({ sender_id: user.id, sender_nickname: displayName, content: chatInput })
       .select()
       .single()
-    
+
     if (error) {
       setMsg('发送失败：' + error.message)
     } else {
       setChatInput('')
-      // 🎯 核心修改：立刻把这条消息塞进本地列表，不需要等服务器推送
       setMessages((prev) => {
-        // 去重：如果服务器回推得太快，防止重复显示
         if (prev.some(m => m.id === data.id)) return prev;
         return [...prev, data];
       })
@@ -335,10 +431,30 @@ export default function Home() {
     navigator.clipboard.writeText(text).then(() => setMsg('📋 已复制到剪贴板！'))
   }
 
+  const getOfflineTime = (lastSignOutAt: string | null) => {
+    if (!lastSignOutAt) return '未知'
+    const diffMs = new Date().getTime() - new Date(lastSignOutAt).getTime()
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    if (days > 30) return '离线'
+    if (days > 0) return `离线 ${days}天`
+    const hours = Math.floor(diffMs / (1000 * 60 * 60))
+    if (hours > 0) return `离线 ${hours}小时`
+    const mins = Math.floor(diffMs / (1000 * 60))
+    return `离线 ${mins}分钟`
+  }
+
   // ==================== 5. UI 渲染 ====================
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-black flex flex-col items-center justify-center p-4 text-white relative">
-      {msg && <div className="fixed top-4 bg-indigo-500/80 backdrop-blur-sm px-6 py-2 rounded-full shadow-lg z-50 text-sm animate-pulse">{msg}</div>}
+      
+      {/* 顶部提示信息 */}
+      <div 
+        className={`fixed top-4 bg-indigo-500/90 border border-indigo-400/50 backdrop-blur-md px-6 py-2.5 rounded-full shadow-2xl z-[200] text-sm font-medium text-white transition-all duration-500 ease-out transform ${
+          isMsgVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95 pointer-events-none'
+        }`}
+      >
+        {msg}
+      </div>
 
       {!user ? (
         // ==================== 5.1 登录页 ====================
@@ -347,7 +463,6 @@ export default function Home() {
             奇幻工作室
           </h1>
 
-          {/* 三个标签页切换 */}
           <div className="flex bg-black/30 rounded-lg p-1 mb-6 text-sm">
             <button onClick={() => setLoginMode('formal')} className={`flex-1 py-2 rounded-md transition ${loginMode === 'formal' ? 'bg-indigo-600 font-bold' : 'text-gray-400'}`}>正式登录</button>
             <button onClick={() => setLoginMode('activate')} className={`flex-1 py-2 rounded-md transition ${loginMode === 'activate' ? 'bg-indigo-600 font-bold' : 'text-gray-400'}`}>激活码激活</button>
@@ -355,7 +470,6 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col gap-4">
-            {/* 1. 正式登录 */}
             {loginMode === 'formal' && (
               <>
                 {justActivated && (
@@ -373,7 +487,6 @@ export default function Home() {
               </>
             )}
 
-            {/* 2. 激活码激活 */}
             {loginMode === 'activate' && (
               <>
                 <input className="bg-black/20 border border-white/10 p-3 rounded-lg text-white" placeholder="输入管理员给你的激活码" value={activationCode} onChange={(e) => setActivationCode(e.target.value)} />
@@ -382,7 +495,6 @@ export default function Home() {
               </>
             )}
 
-            {/* 3. 临时登录 (邮箱测试) */}
             {loginMode === 'temp' && (
               <>
                 <input className="bg-black/20 border border-white/10 p-3 rounded-lg text-white" placeholder="输入测试邮箱" value={tempEmail} onChange={(e) => setTempEmail(e.target.value)} />
@@ -392,35 +504,33 @@ export default function Home() {
             )}
           </div>
 
-          {/* 滑动验证组件 */}
           {mounted && typeof window !== 'undefined' && (
-            <CaptchaModal 
-              open={isCaptchaOpen} 
-              onOpenChange={setIsCaptchaOpen} 
+            <CaptchaModal
+              open={isCaptchaOpen}
+              onOpenChange={setIsCaptchaOpen}
               apiBaseUrl={window.location.origin}
               onSuccess={(token) => {
                 setCaptchaToken(token); setMsg('验证成功！正在登录...'); setIsCaptchaOpen(false)
-                // 验证成功后判断走哪个登录逻辑
-                if (loginMode === 'formal' && pendingLogin) { 
-                  doRealLogin(pendingLogin.account, pendingLogin.password); setPendingLogin(null) 
+                if (loginMode === 'formal' && pendingLogin) {
+                  doRealLogin(pendingLogin.account, pendingLogin.password); setPendingLogin(null)
                 }
                 else if (loginMode === 'temp') {
                   executeLogin(tempEmail, tempPassword)
                 }
               }}
-              onError={() => setMsg('验证失败！请确保在 5 秒内完成。')} 
+              onError={() => setMsg('验证失败！请确保在 5 秒内完成。')}
               title="安全验证"
             />
           )}
         </div>
       ) : (
-        // ==================== 5.2 已登录主界面：左侧工具栏+右侧内容 ====================
+        // ==================== 5.2 已登录主界面 ====================
         <div className="w-full max-w-6xl flex flex-col md:flex-row gap-6 h-[85vh]">
-          
+
           {/* 左侧：工具栏 */}
           <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-2xl w-full md:w-64 flex flex-col">
             <h1 className="text-2xl font-bold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">奇幻工作室</h1>
-            
+
             <div className="flex flex-col gap-2 mb-8">
               <span className="text-gray-400 text-xs uppercase tracking-wider mb-1">当前身份</span>
               <span className="font-medium text-lg text-white break-all">{myProfile?.nickname || '加载中...'}</span>
@@ -430,48 +540,33 @@ export default function Home() {
               )}
             </div>
 
-            {/* 导航菜单 */}
             <div className="flex-1 flex flex-col gap-2">
-              <button 
-                onClick={() => setActiveTab('chat')} 
-                className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'chat' ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-gray-400'}`}
-              >
-                <span>💬</span> 工作室群聊
-              </button>
-              <button 
-                onClick={() => setActiveTab('members')} 
-                className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'members' ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-gray-400'}`}
-              >
-                <span>👥</span> 成员状态
+              <button onClick={() => setActiveTab('chat')} className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'chat' ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-gray-400'}`}><span>💬</span> 工作室群聊</button>
+              <button onClick={() => setActiveTab('members')} className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'members' ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-gray-400'}`}><span>👥</span> 成员状态</button>
+
+              <button onClick={() => setActiveTab('announcement')} className={`relative w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'announcement' ? 'bg-indigo-600 text-white' : 'hover:bg-white/10 text-gray-400'}`}>
+                <span>📢</span> 公告栏
+                {hasUnreadAnnouncement && <span className="absolute top-3 right-3 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>}
               </button>
 
-              {/* 🎯 新增：仅管理员可见的生成邀请码按钮 */}
               {myProfile?.role === 'admin' && (
-                <button 
-                  onClick={() => setActiveTab('admin')} 
-                  className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'admin' ? 'bg-amber-600 text-white' : 'hover:bg-white/10 text-amber-400'}`}
-                >
-                  <span>🎟️</span> 生成邀请码
-                </button>
+                <>
+                  <button onClick={() => setActiveTab('history')} className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'history' ? 'bg-amber-600 text-white' : 'hover:bg-white/10 text-amber-400'}`}><span>📊</span> 签到历史</button>
+                  <button onClick={() => setActiveTab('admin')} className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${activeTab === 'admin' ? 'bg-amber-600 text-white' : 'hover:bg-white/10 text-amber-400'}`}><span>🎟️</span> 生成邀请码</button>
+                </>
               )}
-
-              <button className="w-full text-left p-3 rounded-xl transition flex items-center gap-3 hover:bg-white/10 text-gray-500 cursor-not-allowed" disabled>
-                <span>📍</span> 今日签到 (见上方)
-              </button>
             </div>
 
             <div className="flex flex-col gap-3 mt-4 pt-4 border-t border-white/10">
-              <button className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 font-bold p-3 rounded-xl shadow-lg" onClick={handleCheckIn}>
-                快速签到
-              </button>
+              <button className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 font-bold p-3 rounded-xl shadow-lg" onClick={handleCheckIn}>快速签到</button>
               <button className="w-full bg-red-500/20 text-red-300 border border-red-500/30 p-3 rounded-xl text-sm" onClick={handleLogout}>退出登录</button>
             </div>
           </div>
 
           {/* 右侧：内容区 */}
           <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl shadow-2xl w-full md:flex-1 flex flex-col overflow-hidden relative">
-            
-            {/* 内容区 1：群聊 */}
+
+            {/* 1. 群聊 */}
             {activeTab === 'chat' && (
               <>
                 <div className="p-4 border-b border-white/10 bg-black/20 flex justify-between items-center">
@@ -480,15 +575,12 @@ export default function Home() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                   {messages.length === 0 && <span className="text-gray-500 text-sm text-center mt-10">这里空空如也，快来说第一句话吧！</span>}
-                  {/* 🎯 修改：使用新的字段名 m.sender_nickname 和 m.content */}
                   {messages.map((m) => {
                     const isMe = m.sender_nickname === (myProfile?.nickname || '未命名')
                     return (
                       <div key={m.id} className={`flex flex-col max-w-[80%] ${isMe ? 'self-end items-end' : 'self-start items-start'}`}>
                         <span className="text-xs text-gray-400 mb-1">{m.sender_nickname}</span>
-                        <span className={`px-4 py-2 rounded-2xl ${isMe ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-sm' : 'bg-white/20 text-gray-100 rounded-tl-sm'}`}>
-                          {m.content}
-                        </span>
+                        <span className={`px-4 py-2 rounded-2xl ${isMe ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-sm' : 'bg-white/20 text-gray-100 rounded-tl-sm'}`}>{m.content}</span>
                       </div>
                     )
                   })}
@@ -500,7 +592,7 @@ export default function Home() {
               </>
             )}
 
-            {/* 内容区 2：成员状态 */}
+            {/* 2. 成员状态 */}
             {activeTab === 'members' && (
               <>
                 <div className="p-4 border-b border-white/10 bg-black/20">
@@ -508,13 +600,12 @@ export default function Home() {
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                   {allMembers.length === 0 && <span className="text-gray-500 text-sm text-center mt-10">加载成员数据中...</span>}
-                  
-                  {/* 🎯 核心修改：先对成员进行排序，管理员置顶 */}
+
                   {[...allMembers]
                     .sort((a, b) => {
                       if (a.role === 'admin' && b.role !== 'admin') return -1;
                       if (a.role !== 'admin' && b.role === 'admin') return 1;
-                      return 0; // 角色相同时保持原顺序
+                      return 0;
                     })
                     .map((member) => {
                       const isOnline = onlineUsers.includes(member.id)
@@ -522,29 +613,26 @@ export default function Home() {
                       return (
                         <div key={member.id} className="bg-black/30 border border-white/10 p-4 rounded-xl flex items-center justify-between hover:bg-white/5 transition">
                           <div className="flex items-center gap-4">
-                            {/* 在线绿点/灰点 */}
                             <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-gray-500'}`}></div>
-                            
+
                             <div className="flex flex-col">
                               <div className="flex items-center gap-2">
                                 <span className="font-bold text-white text-base">{member.nickname || '未命名'}</span>
                                 <span className="text-xs font-normal text-gray-400">({member.username || '无真名'})</span>
-                                
-                                {/* 🎯 新增：如果是管理员，显示皇冠标签 */}
                                 {member.role === 'admin' && (
                                   <span className="bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-0.5 rounded border border-yellow-500/50">
                                     👑 管理员
                                   </span>
                                 )}
                               </div>
-                              
+
                               <div className="text-xs text-gray-400 flex gap-4 mt-1">
                                 <span>上次登录: {member.last_sign_in_at ? new Date(member.last_sign_in_at).toLocaleDateString() : '从未'}</span>
                                 <span>{isOnline ? '当前在线' : getOfflineTime(member.last_sign_out_at)}</span>
                               </div>
                             </div>
                           </div>
-                          
+
                           <div>
                             {hasCheckedIn ? (
                               <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-500/50">已签到</span>
@@ -559,7 +647,81 @@ export default function Home() {
               </>
             )}
 
-            {/* 内容区 3：管理员专属面板 */}
+            {/* 3. 公告栏 */}
+            {activeTab === 'announcement' && (
+              <>
+                <div className="p-4 border-b border-white/10 bg-black/20">
+                  <h2 className="font-bold text-gray-200">📢 工作室公告</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto p-8 flex flex-col items-center">
+                  <div className="w-full max-w-2xl bg-white/5 border border-white/10 p-8 rounded-2xl shadow-lg min-h-[200px]">
+                    {myProfile?.role === 'admin' ? (
+                      <>
+                        <textarea className="w-full h-32 bg-black/40 border border-white/10 p-4 rounded-xl text-white resize-none focus:outline-none focus:border-amber-400 mb-4" placeholder="输入公告内容..." value={editAnnouncement} onChange={(e) => setEditAnnouncement(e.target.value)} />
+                        <button className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-6 py-2 rounded-lg" onClick={saveAnnouncement}>发布新公告</button>
+                      </>
+                    ) : (
+                      <div className="flex flex-col h-full">
+                        <div className="text-gray-200 whitespace-pre-wrap text-lg leading-relaxed flex-1">
+                          {announcement ? announcement.content : '暂无公告'}
+                        </div>
+                        
+                        {announcement && (
+                          <div className="mt-8 pt-4 border-t border-white/10 text-xs text-gray-400 text-right">
+                            发布人：<span className="text-gray-300 font-bold">{announcement.profiles?.username || '管理员'}</span>
+                            <span className="mx-2">|</span>
+                            发布时间：{new Date(announcement.updated_at).toLocaleString('zh-CN', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: false
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* 4. 签到历史 (管理员) */}
+            {activeTab === 'history' && myProfile?.role === 'admin' && (
+              <>
+                <div className="p-4 border-b border-white/10 bg-black/20 flex justify-between items-center">
+                  <h2 className="font-bold text-gray-200">📊 每日签到报表</h2>
+                  <input type="date" className="bg-black/40 border border-white/10 text-white px-3 py-1 rounded-lg" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+                </div>
+                <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+                  <div className="flex-1 overflow-y-auto p-4 border-r border-white/10">
+                    <h3 className="text-sm font-bold text-gray-400 mb-3">当日成员签到情况</h3>
+                    {historyData.length === 0 && <p className="text-gray-500 text-sm">加载中...</p>}
+                    {historyData.map(m => (
+                      <div key={m.id} onClick={() => fetchMemberHistory(m)} className={`cursor-pointer p-3 mb-2 rounded-xl border flex justify-between items-center transition ${selectedMember?.id === m.id ? 'bg-amber-900/40 border-amber-500/50' : 'bg-black/20 border-transparent hover:bg-white/10'}`}>
+                        <span>{m.nickname || m.username}</span>
+                        <span className={`text-xs ${m.hasCheckedIn ? 'text-emerald-400' : 'text-gray-500'}`}>{m.hasCheckedIn ? '✅ 已签' : '未签'}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 bg-black/10">
+                    <h3 className="text-sm font-bold text-gray-400 mb-3">个人历史记录</h3>
+                    {!selectedMember ? <p className="text-gray-500 text-sm">请在左侧点击成员查看</p> : (
+                      <>
+                        <p className="mb-4 text-amber-300">查看：{selectedMember.nickname || selectedMember.username}</p>
+                        {memberHistory.map((h, i) => (
+                          <div key={i} className="bg-black/30 px-4 py-2 rounded mb-2 text-sm border border-white/5">{h.check_in_date}</div>
+                        ))}
+                        {memberHistory.length === 0 && <p className="text-gray-500 text-sm">该成员暂无签到记录</p>}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* 5. 生成邀请码 (管理员) */}
             {activeTab === 'admin' && myProfile?.role === 'admin' && (
               <>
                 <div className="p-4 border-b border-white/10 bg-black/20">
@@ -569,22 +731,21 @@ export default function Home() {
                   <div className="w-full max-w-md bg-black/30 p-6 rounded-2xl border border-white/10 shadow-lg">
                     <h3 className="text-lg font-bold mb-4 text-amber-300">生成新邀请码</h3>
                     <p className="text-xs text-gray-400 mb-4">邀请码有效期为 24 小时。请在此输入新成员的真名，生成后将邀请码发给对方。</p>
-                    
+
                     <input
-                      className="w-full bg-black/40 border border-white/10 p-3 rounded-lg text-white mb-4 focus:outline-none focus:border-amber-400" 
-                      placeholder="输入该成员的真名" 
-                      value={newInviteUsername} 
-                      onChange={(e) => setNewInviteUsername(e.target.value)} 
+                      className="w-full bg-black/40 border border-white/10 p-3 rounded-lg text-white mb-4 focus:outline-none focus:border-amber-400"
+                      placeholder="输入该成员的真名"
+                      value={newInviteUsername}
+                      onChange={(e) => setNewInviteUsername(e.target.value)}
                     />
-                    
-                    <button 
-                      className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold p-3 rounded-lg transition-colors" 
+
+                    <button
+                      className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold p-3 rounded-lg transition-colors"
                       onClick={generateCode}
                     >
                       生成邀请码
                     </button>
 
-                    {/* 刚生成的激活码展示区 */}
                     {lastGeneratedCode.code && (
                       <div className="mt-6 p-4 bg-amber-900/30 border border-amber-500/50 rounded-xl">
                         <p className="text-sm text-amber-200 mb-3">
@@ -630,8 +791,8 @@ export default function Home() {
       {!user && (
         <button onClick={() => executeLogin(DEBUG_EMAIL, DEBUG_PASSWORD)} className="fixed bottom-6 right-6 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-full shadow-2xl text-sm z-50">⚡ 一键调试登录</button>
       )}
-      
-      {/* 🎯 新增：左下角悬浮版本号 */}
+
+      {/* 左下角悬浮版本号 */}
       <div className="fixed bottom-4 left-4 text-xs text-gray-500 font-mono tracking-wider opacity-60 hover:opacity-100 transition-opacity z-50">
         v{packageJson.version}
       </div>
