@@ -149,7 +149,7 @@ export default function Home() {
   // 4.2 真正的登录执行逻辑（反查昵称并登录）
   const doRealLogin = async (account: string, password: string) => {
     const input = account.trim();
-    
+
     // 如果是纯数字，直接拼邮箱登录
     if (/^\d{6}$/.test(input)) {
       executeLogin(`${input}@studio.com`, password)
@@ -173,7 +173,7 @@ export default function Home() {
   // 4.2 点击按钮的入口
   const handleLogin = (account: string, password: string) => {
     if (!account || !password) return setMsg('请填写完整的账号和密码')
-    
+
     // 如果还没有通过滑块验证
     if (!captchaToken) {
       setPendingLogin({ account, password }) // 先把账号密码存起来
@@ -189,11 +189,29 @@ export default function Home() {
     if (newPassword.length < 6) return setMsg('密码长度不能少于 6 位')
 
     setMsg('正在验证激活码...')
-    const { data: codeData, error: codeError } = await supabase
-      .from('activation_codes').select('*').eq('code', activationCode.trim()).single()
 
-    if (codeError || !codeData) return setMsg('激活失败：无效的激活码')
-    if (codeData.is_used) return setMsg('激活失败：该激活码已被使用')
+    // 🎯 核心修复 1：去除空格，并强制转成大写（防止朋友输入小写）
+    const inputCode = activationCode.trim().toUpperCase()
+
+    const { data: codeData, error: codeError } = await supabase
+      .from('activation_codes')
+      .select('*')
+      .eq('code', inputCode)
+      .maybeSingle() // 🎯 核心修复 2：用 maybeSingle，查不到返回 null 而不是直接抛错
+
+    if (codeError) {
+      // 🎯 核心修复 3：暴露真实的错误（如果是权限问题，这里会显示 permission denied）
+      console.error('查询激活码真实报错:', codeError)
+      return setMsg('激活失败，系统错误：' + codeError.message)
+    }
+
+    if (!codeData) {
+      return setMsg('激活失败：无效的激活码（请检查是否有空格或大小写错误）')
+    }
+
+    if (codeData.is_used) {
+      return setMsg('激活失败：该激活码已被使用')
+    }
 
     const newId = Math.floor(100000 + Math.random() * 900000).toString()
     const newEmail = `${newId}@studio.com`
@@ -202,7 +220,6 @@ export default function Home() {
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: newEmail,
       password: newPassword,
-      // 🎯 核心新增：把真名作为元数据传过去，数据库触发器会自动接收
       options: {
         data: {
           username: codeData.username
@@ -210,27 +227,19 @@ export default function Home() {
       }
     })
 
-    // 🎯 核心修复：用大括号包起来，并且删掉下面那行重复的报错判断
     if (authError) {
       return setMsg('激活失败：' + authError.message)
     }
 
-    // 下面直接接着写你的更新逻辑（不需要再管 authError 了）
-
     await supabase.from('activation_codes').update({ is_used: true, assigned_account_id: newId }).eq('id', codeData.id)
 
-    // 🎯 核心修改：激活成功后，不再用 alert 折磨用户
-    // 1. 尝试自动复制代号到剪贴板
     navigator.clipboard.writeText(newId).then(() => {
       setMsg('激活成功！代号已自动复制到剪贴板。')
     }).catch(() => {
       setMsg('激活成功！请手动复制你的代号。')
     })
 
-    // 2. 保存激活结果，供 UI 展示
     setJustActivated({ id: newId, name: codeData.username })
-
-    // 3. 自动切回正式登录，并帮你填好账号密码，让你一键登录
     setLoginMode('formal')
     setAccountId(newId)
     setFormalPassword(newPassword)
@@ -242,17 +251,22 @@ export default function Home() {
     if (!newInviteUsername.trim()) return setMsg('请先输入该邀请码绑定的用户名（真名）')
 
     const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase()
+
+    // 🎯 修改这里：设置 1 天（24小时）有效期
+    // 24小时 * 60分钟 * 60秒 * 1000毫秒
+    const expireDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
     const { error } = await supabase.from('activation_codes').insert({
       code: randomCode,
-      username: newInviteUsername.trim()
+      username: newInviteUsername.trim(),
+      expires_at: expireDate.toISOString() // 写入过期时间
     })
 
     if (error) {
       setMsg('生成失败：' + error.message)
     } else {
-      // 🎯 核心修改：不再用 alert，而是把数据存到状态里，在界面上渲染出来
       setLastGeneratedCode({ code: randomCode, name: newInviteUsername.trim() })
-      setMsg('✅ 邀请码生成成功')
+      setMsg('✅ 邀请码生成成功 (1天内有效)') // 提示语也顺便改一下
       setNewInviteUsername('') // 清空输入框
     }
   }
@@ -365,9 +379,9 @@ export default function Home() {
 
                 {/* 👇 把 placeholder 改了 */}
                 <input className="bg-black/20 border border-white/10 p-3 rounded-lg text-white" placeholder="输入专属代号或昵称" value={accountId} onChange={(e) => setAccountId(e.target.value)} />
-                
+
                 <input className="bg-black/20 border border-white/10 p-3 rounded-lg text-white" placeholder="输入密码" type="password" value={formalPassword} onChange={(e) => setFormalPassword(e.target.value)} />
-                
+
                 {/* 🎯 修复：去掉传参后面的 @studio.com */}
                 <button className="bg-gradient-to-r from-blue-600 to-purple-600 font-bold p-3 rounded-lg mt-2" onClick={() => handleLogin(accountId, formalPassword)}>进入工作站</button>
               </>
@@ -395,12 +409,12 @@ export default function Home() {
               apiBaseUrl={window.location.origin}
               onSuccess={(token) => {
                 setCaptchaToken(token); setMsg('验证成功！正在登录...'); setIsCaptchaOpen(false)
-                
+
                 // 🎯 修复：如果是正式登录，并且有暂存的账号密码，就继续登录
                 if (loginMode === 'formal' && pendingLogin) {
                   doRealLogin(pendingLogin.account, pendingLogin.password)
                   setPendingLogin(null) // 用完清空
-                } 
+                }
                 // 如果是临时登录
                 else if (loginMode === 'temp') {
                   executeLogin(tempEmail, tempPassword)
