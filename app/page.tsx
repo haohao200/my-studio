@@ -152,7 +152,7 @@ export default function Home() {
   // 🎯 修复 3：全局登录状态监听（防死循环，直接清理状态）
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+      if (event === 'SIGNED_OUT') {
         // 直接清理，不调用 handleLogout，防死循环
         setUser(null); setMyProfile(null); setMessages([]); setEmails([])
         setAnnouncement(null); setAllMembers([]); setOnlineUsers([])
@@ -809,12 +809,12 @@ export default function Home() {
                   {/* 收件箱子页面 */}
                   {mailTab === 'inbox' && (
                     <div className="w-full max-w-3xl mx-auto flex flex-col gap-2 mt-2">
-                      
+
                       {/* 🎯 顶部工具栏 */}
                       <div className="flex items-center justify-between bg-black/20 p-2 rounded-lg border border-white/10 mb-2">
                         <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white ml-2">
-                          <input 
-                            type="checkbox" 
+                          <input
+                            type="checkbox"
                             className="w-4 h-4 rounded border-gray-500 text-indigo-600 focus:ring-indigo-500"
                             checked={emails.length > 0 && selectedEmailIds.length === emails.length}
                             onChange={toggleSelectAll}
@@ -822,14 +822,14 @@ export default function Home() {
                           全选
                         </label>
                         <div className="flex gap-2">
-                          <button 
+                          <button
                             onClick={deleteSelectedEmails}
                             disabled={selectedEmailIds.length === 0 || isDeleting}
                             className={`px-3 py-1.5 rounded text-xs font-bold transition ${selectedEmailIds.length > 0 && !isDeleting ? 'bg-red-500/80 hover:bg-red-500 text-white' : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'}`}
                           >
                             删除选中 ({selectedEmailIds.length})
                           </button>
-                          <button 
+                          <button
                             onClick={deleteAllEmails}
                             disabled={emails.length === 0 || isDeleting}
                             className={`px-3 py-1.5 rounded text-xs font-bold transition ${emails.length > 0 && !isDeleting ? 'bg-red-900/50 hover:bg-red-800 text-red-300 border border-red-500/30' : 'bg-gray-600/50 text-gray-400 cursor-not-allowed'}`}
@@ -840,22 +840,22 @@ export default function Home() {
                       </div>
 
                       {emails.length === 0 && <p className="text-gray-500 text-center mt-10">收件箱空空如也</p>}
-                      
+
                       {emails.map(email => {
                         const isChecked = selectedEmailIds.includes(email.id)
                         return (
                           <div key={email.id} onClick={() => handleOpenEmail(email)} className={`cursor-pointer p-4 rounded-xl border flex items-center justify-between transition ${!email.is_read ? 'bg-indigo-900/30 border-indigo-500/50 hover:bg-indigo-900/50' : 'bg-black/20 border-white/5 hover:bg-white/10'}`}>
-                            
+
                             <div className="flex items-center gap-4">
                               {/* 🎯 复选框 */}
-                              <input 
-                                type="checkbox" 
+                              <input
+                                type="checkbox"
                                 className="w-4 h-4 rounded border-gray-500 text-indigo-600 focus:ring-indigo-500"
                                 checked={isChecked}
-                                onChange={() => {}} // 由 onClick 代理
+                                onChange={() => { }} // 由 onClick 代理
                                 onClick={(e) => toggleSelectEmail(email.id, e)}
                               />
-                              
+
                               <div className="flex flex-col gap-1">
                                 <span className={`font-bold ${!email.is_read ? 'text-white' : 'text-gray-400'}`}>{email.title}</span>
                                 <span className="text-xs text-gray-500">发件人: {email.sender_name}</span>
@@ -868,7 +868,7 @@ export default function Home() {
                                 {!email.is_read && <span className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full">未读</span>}
                               </div>
                               {/* 🎯 单封删除按钮 */}
-                              <button 
+                              <button
                                 onClick={(e) => deleteSingleEmail(email.id, e)}
                                 className="text-gray-500 hover:text-red-400 transition p-1"
                                 title="删除此邮件"
@@ -876,7 +876,7 @@ export default function Home() {
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                               </button>
                             </div>
-                            
+
                           </div>
                         )
                       })}
@@ -956,13 +956,13 @@ export default function Home() {
               <span>发件人: {selectedEmail.sender_name}</span>
               <span>{formatTime(selectedEmail.created_at)}</span>
             </div>
-            
+
             <div className="text-gray-200 whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-y-auto mb-6">{selectedEmail.content}</div>
-            
+
             {/* 🎯 详情弹窗里的删除按钮 */}
             <div className="flex justify-end border-t border-white/10 pt-4">
-              <button 
-                onClick={() => deleteSingleEmail(selectedEmail.id)} 
+              <button
+                onClick={() => deleteSingleEmail(selectedEmail.id)}
                 disabled={isDeleting}
                 className="px-6 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/40 transition"
               >
